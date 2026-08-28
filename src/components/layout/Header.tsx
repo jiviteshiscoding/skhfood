@@ -4,11 +4,12 @@ import { useAuth } from '@/context/AuthContext';
 import { ROUTE_PATHS } from '@/routes/route-paths';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { Sprout, LogOut, User as UserIcon } from 'lucide-react';
+import { LanguageSelector } from '@/components/auth/LanguageSelector';
+import { Sprout, LogOut, User as UserIcon, Sparkles } from 'lucide-react';
 import { ROLE_LABELS } from '@/config/constants';
 
 export const Header: React.FC = () => {
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, isDemoPreview, signOut } = useAuth();
   const navigate = useNavigate();
 
   const handleSignOut = async () => {
@@ -17,7 +18,7 @@ export const Header: React.FC = () => {
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200">
+    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         <Link to={ROUTE_PATHS.HOME} className="flex items-center gap-2.5 font-bold text-slate-900 group">
           <div className="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center text-white shadow-sm group-hover:bg-brand-700 transition">
@@ -25,19 +26,28 @@ export const Header: React.FC = () => {
           </div>
           <div className="flex flex-col">
             <span className="text-base font-extrabold tracking-tight">Farm Tracer</span>
-            <span className="text-[10px] uppercase font-semibold text-brand-700 tracking-wider">SKH031 Digital Traceability</span>
+            <span className="text-[10px] uppercase font-semibold text-brand-700 tracking-wider">SKH031 Food Traceability</span>
           </div>
         </Link>
 
         <div className="flex items-center gap-3">
+          <LanguageSelector variant="minimal" />
+
           {user ? (
             <div className="flex items-center gap-3">
               <div className="hidden sm:flex flex-col items-end">
-                <span className="text-sm font-semibold text-slate-800">
-                  {profile?.full_name || user.email}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-slate-800">
+                    {profile?.full_name || user.email}
+                  </span>
+                  {isDemoPreview && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                      <Sparkles className="w-2.5 h-2.5" /> Preview
+                    </span>
+                  )}
+                </div>
                 {profile?.role && (
-                  <Badge variant="success" size="sm">
+                  <Badge variant="status" statusKey={profile.role} size="sm">
                     {ROLE_LABELS[profile.role] || profile.role}
                   </Badge>
                 )}

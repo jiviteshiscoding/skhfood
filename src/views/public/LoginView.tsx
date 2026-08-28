@@ -1,63 +1,284 @@
 import React, { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
-import { Sprout, Lock, Mail, ArrowRight } from 'lucide-react';
+import { Badge } from '@/components/ui/Badge';
+import { LanguageSelector } from '@/components/auth/LanguageSelector';
+import { DemoWorkspaceModal, DemoRoleProfile } from '@/components/auth/DemoWorkspaceModal';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
+import { ROUTE_PATHS } from '@/routes/route-paths';
+import { UserRole } from '@/types/auth';
+import { ROLE_LABELS } from '@/config/constants';
+import { 
+  Sprout, 
+  Lock, 
+  Mail, 
+  User as UserIcon,
+  ArrowRight, 
+  Eye, 
+  EyeOff, 
+  Sparkles,
+  ShieldCheck,
+  CheckCircle2
+} from 'lucide-react';
 
 export const LoginView: React.FC = () => {
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const toast = useToast();
+  const [selectedRole, setSelectedRole] = useState<UserRole>('FARMER');
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+  const [isDemoModalOpen, setIsDemoModalOpen] = useState(false);
+  
+  // Validation & Error states
+  const [errors, setErrors] = useState<{ email?: string; password?: string; fullName?: string }>({});
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const handleDummySubmit = (e: React.FormEvent) => {
+  const { signIn, signUp, loginAsDemoRole, isLoading } = useAuth();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const redirectTarget = (location.state as { from?: { pathname?: string } })?.from?.pathname || ROUTE_PATHS.DASHBOARD;
+
+  const validateForm = (): boolean => {
+    const newErrors: { email?: string; password?: string; fullName?: string } = {};
+
+    if (authMode === 'signup' && !fullName.trim()) {
+      newErrors.fullName = 'Full name is required';
+    }
+
+    if (!email.trim()) {
+      newErrors.email = 'Email address is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      newErrors.email = 'Please enter a valid email address';
+    }
+
+    if (!password) {
+      newErrors.password = 'Password is required';
+    } else if (password.length < 6) {
+      newErrors.password = 'Password must be at least 6 characters';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      toast.info(
-        'Phase 0 Foundation Active: Full Supabase authentication is scheduled for Phase 1/2.',
-        'Foundation Shell'
-      );
-    }, 600);
+    setFormError(null);
+
+    if (!validateForm()) {
+      return;
+    }
+
+    if (authMode === 'signin') {
+      const result = await signIn(email, password);
+      if (result.success) {
+        toast.success('Successfully authenticated.', 'Welcome to Farm Tracer');
+        navigate(redirectTarget, { replace: true });
+      } else {
+        setFormError(result.error?.message || 'Invalid email or password. Please verify your credentials.');
+      }
+    } else {
+      const result = await signUp({
+        email,
+        password,
+        fullName,
+        role: selectedRole,
+      });
+
+      if (result.success) {
+        toast.success(
+          'Account created successfully. Please check your email if confirmation is required.',
+          'Registration Successful'
+        );
+        navigate(redirectTarget, { replace: true });
+      } else {
+        setFormError(result.error?.message || 'Registration failed. Please try again.');
+      }
+    }
+  };
+
+  const handleSelectDemoRole = (roleProfile: DemoRoleProfile) => {
+    loginAsDemoRole(roleProfile);
+    toast.info(
+      `Entered workspace as ${roleProfile.title} (${roleProfile.organization})`,
+      'Role Workspace Active'
+    );
+    navigate(redirectTarget, { replace: true });
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8">
-      <div className="max-w-md w-full">
-        <div className="text-center mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-brand-600 flex items-center justify-center text-white mx-auto mb-3 shadow-md shadow-brand-500/20">
+    <div className="flex-1 flex flex-col justify-center items-center py-10 px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-md">
+        {/* Brand Header */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-brand-600 text-white shadow-md shadow-brand-600/20 mb-3">
             <Sprout className="w-6 h-6" />
           </div>
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Stakeholder Sign In</h2>
-          <p className="text-sm text-slate-600 mt-1">
-            Access your supply chain role portal
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+              Farm Tracer
+            </h1>
+            <Badge variant="status" statusKey="HARVESTED" size="sm">
+              SKH031
+            </Badge>
+          </div>
+          <p className="text-xs text-slate-600 max-w-xs mx-auto">
+            Digital Food Traceability & Lineage System
           </p>
         </div>
 
-        <Card variant="glass" className="shadow-lg">
-          <form onSubmit={handleDummySubmit} className="space-y-4">
+        {/* Main Auth Card */}
+        <Card variant="glass" className="shadow-xl border-slate-200/80 p-6 sm:p-8">
+          {/* Card Topbar with Language Selector */}
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                {authMode === 'signin' ? 'Stakeholder Sign In' : 'Register Stakeholder'}
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                {authMode === 'signin' ? 'Access your supply-chain custody role' : 'Create a verified supply-chain account'}
+              </p>
+            </div>
+            <LanguageSelector />
+          </div>
+
+          {/* Mode Tabs (Sign In vs Sign Up) */}
+          <div className="flex rounded-lg bg-slate-100 p-1 mb-4 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('signin');
+                setFormError(null);
+              }}
+              className={`flex-1 py-1.5 rounded-md transition-all ${
+                authMode === 'signin'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('signup');
+                setFormError(null);
+              }}
+              className={`flex-1 py-1.5 rounded-md transition-all ${
+                authMode === 'signup'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Register New Account
+            </button>
+          </div>
+
+          {formError && (
+            <Alert variant="error" className="mb-4">
+              {formError}
+            </Alert>
+          )}
+
+          {/* Authentication Form */}
+          <form onSubmit={handleFormSubmit} className="space-y-3.5">
+            {authMode === 'signup' && (
+              <>
+                <Input
+                  label="Full Name / Representative"
+                  type="text"
+                  placeholder="e.g. Rajesh Patil"
+                  value={fullName}
+                  onChange={(e) => {
+                    setFullName(e.target.value);
+                    if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: undefined }));
+                  }}
+                  error={errors.fullName}
+                  leftIcon={<UserIcon className="w-4 h-4" />}
+                  required
+                />
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700">
+                    Stakeholder Supply-Chain Role
+                  </label>
+                  <select
+                    value={selectedRole}
+                    onChange={(e) => setSelectedRole(e.target.value as UserRole)}
+                    className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  >
+                    {Object.entries(ROLE_LABELS).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
             <Input
               label="Email address"
               type="email"
-              placeholder="stakeholder@farmtracer.org"
+              placeholder="e.g. farmer@kopargaon-farm.org"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
+              }}
+              error={errors.email}
               leftIcon={<Mail className="w-4 h-4" />}
+              autoComplete="email"
+              required
             />
 
             <Input
               label="Password"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
+              }}
+              error={errors.password}
               leftIcon={<Lock className="w-4 h-4" />}
+              rightIcon={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded focus:outline-none"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              }
+              autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
+              required
             />
+
+            {authMode === 'signin' && (
+              <div className="flex items-center justify-between text-xs pt-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none text-slate-700 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
+                  />
+                  <span>Remember session</span>
+                </label>
+                <span className="text-[11px] text-slate-400">Supabase Auth</span>
+              </div>
+            )}
 
             <Button
               type="submit"
@@ -66,17 +287,75 @@ export const LoginView: React.FC = () => {
               isLoading={isLoading}
               rightIcon={<ArrowRight className="w-4 h-4" />}
             >
-              Sign In
+              {authMode === 'signin' ? 'Sign In to Workspace' : 'Create Stakeholder Account'}
             </Button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-slate-200/60">
-            <Alert variant="info" title="Phase 0 Status">
-              Login UI shell created with pure styling & components. Real Supabase auth workflows will be integrated in Phase 1 & 2.
-            </Alert>
+          {/* Clean Divider for 1-Click Demo Quick Access */}
+          <div className="relative my-5">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-200" />
+            </div>
+            <div className="relative flex justify-center text-[10px] uppercase">
+              <span className="bg-white px-2.5 text-slate-400 font-semibold tracking-wider">
+                Or 1-Click Demo Workspace
+              </span>
+            </div>
+          </div>
+
+          {/* Demo Workspace Trigger Button */}
+          <button
+            type="button"
+            onClick={() => setIsDemoModalOpen(true)}
+            className="w-full flex items-center justify-between p-3.5 rounded-xl border border-emerald-200/90 bg-emerald-50/50 hover:bg-emerald-50 hover:border-emerald-300 text-emerald-900 transition-all text-left shadow-sm group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-emerald-100 rounded-lg text-emerald-700">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-emerald-950 group-hover:text-emerald-900">
+                  Explore Demo Workspace
+                </div>
+                <div className="text-[11px] text-emerald-700">
+                  1-Click Switcher for All 10 Stakeholder Roles
+                </div>
+              </div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
+          </button>
+
+          {/* Phase 2 Footer */}
+          <div className="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-brand-600" />
+              <span>Phase 2 Real Supabase Auth Ready</span>
+            </div>
+            <span className="font-mono text-[10px] text-slate-400">rebuild branch</span>
           </div>
         </Card>
+
+        {/* Consumer Public Verification Helper */}
+        <div className="mt-4 text-center">
+          <p className="text-xs text-slate-500">
+            Looking for public food verification?{' '}
+            <button
+              onClick={() => navigate('/trace/FT-BSK-2026-001')}
+              className="text-brand-700 font-semibold hover:underline inline-flex items-center gap-1"
+            >
+              <CheckCircle2 className="w-3 h-3 text-brand-600" />
+              Scan / Open Public Trace
+            </button>
+          </p>
+        </div>
       </div>
+
+      {/* Demo Workspace Modal */}
+      <DemoWorkspaceModal
+        isOpen={isDemoModalOpen}
+        onClose={() => setIsDemoModalOpen(false)}
+        onSelectRole={handleSelectDemoRole}
+      />
     </div>
   );
 };
