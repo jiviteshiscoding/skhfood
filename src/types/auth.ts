@@ -45,6 +45,14 @@ export interface Profile extends BaseEntity {
   language?: string;
 }
 
+export interface OrganizationMember extends BaseEntity {
+  organization_id: string;
+  profile_id: string;
+  role_in_org?: string;
+  organization?: Organization;
+  profile?: Profile;
+}
+
 export interface AuthUser {
   id: string;
   email: string;

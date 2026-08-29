@@ -2,7 +2,7 @@ import { BaseService } from './base.service';
 import { supabase } from '@/lib/supabase';
 import { Result } from '@/types/common';
 import { Profile, UserRole, Organization } from '@/types/auth';
-import { User } from '@supabase/supabase-js';
+import { User, Session } from '@supabase/supabase-js';
 
 export interface SignUpParams {
   email: string;
@@ -48,7 +48,7 @@ export class AuthService extends BaseService {
   /**
    * Real Supabase Authentication: Register a new stakeholder user
    */
-  async signUp(params: SignUpParams): Promise<Result<{ user: User | null; profile: Profile | null }>> {
+  async signUp(params: SignUpParams): Promise<Result<{ user: User | null; profile: Profile | null; session: Session | null }>> {
     try {
       const { data, error } = await supabase.auth.signUp({
         email: params.email.trim(),
@@ -64,23 +64,41 @@ export class AuthService extends BaseService {
       });
 
       if (error) {
+        console.error('[AUTH SIGNUP ERROR]', {
+          message: error.message,
+          status: error.status,
+          name: error.name,
+          code: (error as any)?.code,
+          raw: error,
+        });
         return this.handleError(error, error.message || 'Failed to create user account.');
       }
 
       if (!data.user) {
-        return this.handleError(new Error('Sign up did not return a user'), 'Account registration failed.');
+        const missingUserErr = new Error('Sign up did not return a user');
+        console.error('[AUTH SIGNUP ERROR]', missingUserErr);
+        return this.handleError(missingUserErr, 'Account registration failed: No user returned.');
       }
 
-      // Check if profile was created via database trigger
-      const profileResult = await this.getProfile(data.user.id);
-      const profile = profileResult.success ? profileResult.data : null;
+      // Signup succeeded in creating user in auth.users
+      let profile: Profile | null = null;
+      try {
+        const profileResult = await this.getProfile(data.user.id);
+        if (profileResult.success && profileResult.data) {
+          profile = profileResult.data;
+        }
+      } catch (profileErr) {
+        console.warn('[AUTH SIGNUP] Profile lookup deferred after successful signup:', profileErr);
+      }
 
       return this.handleSuccess({
         user: data.user,
         profile,
+        session: data.session,
       });
     } catch (err) {
-      return this.handleError(err, 'An unexpected error occurred during sign up.');
+      console.error('[AUTH SIGNUP ERROR]', err);
+      return this.handleError(err, err instanceof Error ? err.message : 'An unexpected error occurred during sign up.');
     }
   }
 

@@ -10,7 +10,8 @@ import { DemoWorkspaceModal, DemoRoleProfile } from '@/components/auth/DemoWorks
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { ROUTE_PATHS } from '@/routes/route-paths';
-import { UserRole } from '@/types/auth';
+import { authService } from '@/services/auth.service';
+import { UserRole, Organization } from '@/types/auth';
 import { ROLE_LABELS } from '@/config/constants';
 import { 
   Sprout, 
@@ -31,6 +32,8 @@ export const LoginView: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [selectedRole, setSelectedRole] = useState<UserRole>('FARMER');
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('');
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [isDemoModalOpen, setIsDemoModalOpen] = useState(false);
@@ -38,6 +41,19 @@ export const LoginView: React.FC = () => {
   // Validation & Error states
   const [errors, setErrors] = useState<{ email?: string; password?: string; fullName?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const [successInfo, setSuccessInfo] = useState<{ title: string; message: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Load organizations for signup dropdown
+  React.useEffect(() => {
+    const loadOrgs = async () => {
+      const res = await authService.getOrganizations();
+      if (res.success && res.data) {
+        setOrganizations(res.data);
+      }
+    };
+    loadOrgs();
+  }, []);
 
   const { signIn, signUp, loginAsDemoRole, isLoading } = useAuth();
   const toast = useToast();
@@ -72,36 +88,74 @@ export const LoginView: React.FC = () => {
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    setSuccessInfo(null);
 
     if (!validateForm()) {
       return;
     }
 
-    if (authMode === 'signin') {
-      const result = await signIn(email, password);
-      if (result.success) {
-        toast.success('Successfully authenticated.', 'Welcome to Farm Tracer');
-        navigate(redirectTarget, { replace: true });
-      } else {
-        setFormError(result.error?.message || 'Invalid email or password. Please verify your credentials.');
-      }
-    } else {
-      const result = await signUp({
-        email,
-        password,
-        fullName,
-        role: selectedRole,
-      });
+    setIsSubmitting(true);
 
-      if (result.success) {
-        toast.success(
-          'Account created successfully. Please check your email if confirmation is required.',
-          'Registration Successful'
-        );
-        navigate(redirectTarget, { replace: true });
+    try {
+      if (authMode === 'signin') {
+        const result = await signIn(email, password);
+        if (result.success) {
+          const stakeholderName = result.data?.profile?.full_name || result.data?.user?.user_metadata?.full_name || result.data?.user?.email || email;
+          setSuccessInfo({
+            title: 'Sign In Successful',
+            message: `Logged in as ${stakeholderName}. Redirecting to dashboard...`,
+          });
+          toast.success(`Logged in as ${stakeholderName}`, 'Welcome to Farm Tracer');
+          setTimeout(() => {
+            navigate(redirectTarget, { replace: true });
+          }, 300);
+        } else {
+          const errMsg = result.error?.message || 'Invalid email or password. Please verify your credentials.';
+          setFormError(errMsg);
+        }
       } else {
-        setFormError(result.error?.message || 'Registration failed. Please try again.');
+        const result = await signUp({
+          email,
+          password,
+          fullName,
+          role: selectedRole,
+          organizationId: selectedOrgId || undefined,
+        });
+
+        if (result.success) {
+          const registeredName = fullName || result.data?.user?.email || email;
+          if (result.data?.session) {
+            setSuccessInfo({
+              title: 'Account Created Successfully',
+              message: `Account created successfully. Logged in as ${registeredName}. Redirecting to dashboard...`,
+            });
+            toast.success('Account created successfully.', 'Registration Successful');
+            setTimeout(() => {
+              navigate(redirectTarget, { replace: true });
+            }, 300);
+          } else {
+            setSuccessInfo({
+              title: 'Account Created Successfully',
+              message: `Account created successfully for ${email}. Please check your email inbox to verify your account, then sign in below.`,
+            });
+            toast.success(
+              'Account created successfully. Please check your email if confirmation is required.',
+              'Registration Successful'
+            );
+            setAuthMode('signin');
+          }
+        } else {
+          const errMsg = result.error?.message || 'Registration failed. Please check your details and try again.';
+          console.error('[LoginView Signup Error]', result.error);
+          setFormError(errMsg);
+        }
       }
+    } catch (err: unknown) {
+      const genericMsg = err instanceof Error ? err.message : 'An unexpected error occurred during submission.';
+      console.error('[LoginView handleFormSubmit Exception]', err);
+      setFormError(genericMsg);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -157,6 +211,7 @@ export const LoginView: React.FC = () => {
               onClick={() => {
                 setAuthMode('signin');
                 setFormError(null);
+                setSuccessInfo(null);
               }}
               className={`flex-1 py-1.5 rounded-md transition-all ${
                 authMode === 'signin'
@@ -171,6 +226,7 @@ export const LoginView: React.FC = () => {
               onClick={() => {
                 setAuthMode('signup');
                 setFormError(null);
+                setSuccessInfo(null);
               }}
               className={`flex-1 py-1.5 rounded-md transition-all ${
                 authMode === 'signup'
@@ -184,7 +240,18 @@ export const LoginView: React.FC = () => {
 
           {formError && (
             <Alert variant="error" className="mb-4">
-              {formError}
+              <div className="text-xs">
+                <span className="font-bold">Error: </span>
+                {formError}
+              </div>
+            </Alert>
+          )}
+
+          {successInfo && (
+            <Alert variant="success" className="mb-4" title={successInfo.title}>
+              <div className="text-xs leading-relaxed">
+                {successInfo.message}
+              </div>
             </Alert>
           )}
 
@@ -221,6 +288,27 @@ export const LoginView: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 flex items-center justify-between">
+                    <span>Assigned Organization / Entity</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedOrgId}
+                      onChange={(e) => setSelectedOrgId(e.target.value)}
+                      className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    >
+                      <option value="">-- Independent / Unassigned --</option>
+                      {organizations.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.name} ({org.type}{org.city ? ` - ${org.city}` : ''})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </>
             )}
@@ -284,10 +372,13 @@ export const LoginView: React.FC = () => {
               type="submit"
               variant="primary"
               className="w-full mt-2"
-              isLoading={isLoading}
+              isLoading={isLoading || isSubmitting}
+              disabled={isLoading || isSubmitting}
               rightIcon={<ArrowRight className="w-4 h-4" />}
             >
-              {authMode === 'signin' ? 'Sign In to Workspace' : 'Create Stakeholder Account'}
+              {isSubmitting 
+                ? (authMode === 'signin' ? 'Authenticating...' : 'Registering Account...') 
+                : (authMode === 'signin' ? 'Sign In to Workspace' : 'Create Stakeholder Account')}
             </Button>
           </form>
 

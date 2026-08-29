@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { Profile } from '@/types/auth';
@@ -14,7 +14,7 @@ interface AuthContextType {
   isLoading: boolean;
   isDemoPreview: boolean;
   signIn: (email: string, password: string) => Promise<Result<{ user: User; profile: Profile | null }>>;
-  signUp: (params: SignUpParams) => Promise<Result<{ user: User | null; profile: Profile | null }>>;
+  signUp: (params: SignUpParams) => Promise<Result<{ user: User | null; profile: Profile | null; session: Session | null }>>;
   loginAsDemoRole: (roleProfile: DemoRoleProfile) => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -31,24 +31,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isDemoPreview, setIsDemoPreview] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  const fetchUserProfile = useCallback(async (userId: string) => {
-    const result = await authService.getProfile(userId);
-    if (result.success && result.data) {
-      setProfile(result.data);
-    } else {
-      // If profile does not exist yet (e.g. metadata-only user), create default profile object
-      setProfile({
-        id: `profile-${userId}`,
-        user_id: userId,
-        full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Stakeholder',
-        role: (user?.user_metadata?.role || 'FARMER'),
-        language: user?.user_metadata?.language || 'en',
-        created_at: new Date().toISOString(),
-      });
-    }
-  }, [user]);
+  // Keep a ref to current user to allow refreshProfile to read latest user without recreating callbacks
+  const userRef = useRef<User | null>(null);
+  const isDemoPreviewRef = useRef<boolean>(false);
 
-  // Initialize and persist sessions across page reloads
+  useEffect(() => {
+    userRef.current = user;
+    isDemoPreviewRef.current = isDemoPreview;
+  }, [user, isDemoPreview]);
+
+  /**
+   * Completely stable fetchUserProfile that takes targetUser directly.
+   * Does NOT depend on [user] state, preventing infinite React effect re-runs.
+   */
+  const fetchUserProfile = useCallback(async (targetUser: User): Promise<Profile> => {
+    try {
+      const result = await authService.getProfile(targetUser.id);
+      if (result.success && result.data) {
+        setProfile(result.data);
+        return result.data;
+      }
+    } catch (err) {
+      console.warn('[AuthContext] Profile fetch from DB error, falling back to metadata:', err);
+    }
+
+    // Fallback profile object generated from metadata
+    const fallbackProfile: Profile = {
+      id: `profile-${targetUser.id}`,
+      user_id: targetUser.id,
+      full_name: targetUser.user_metadata?.full_name || targetUser.email?.split('@')[0] || 'Stakeholder',
+      role: targetUser.user_metadata?.role || 'FARMER',
+      organization_id: targetUser.user_metadata?.organization_id || undefined,
+      language: targetUser.user_metadata?.language || 'en',
+      created_at: new Date().toISOString(),
+    };
+
+    setProfile(fallbackProfile);
+    return fallbackProfile;
+  }, []);
+
+  // Initialize Auth on Mount only (once)
   useEffect(() => {
     let isMounted = true;
 
@@ -59,14 +81,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (isValid) {
           // 1. Check for active Supabase Auth session
           const { data: { session: currentSession } } = await supabase.auth.getSession();
-          
+
           if (!isMounted) return;
 
           if (currentSession?.user) {
             setSession(currentSession);
             setUser(currentSession.user);
             setIsDemoPreview(false);
-            await fetchUserProfile(currentSession.user.id);
+            // Fetch profile safely
+            await fetchUserProfile(currentSession.user);
             setIsLoading(false);
             return;
           }
@@ -97,23 +120,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initializeAuth();
 
-    // 3. Listen for Supabase auth state changes (login, token refresh, logout)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+    // 3. Listen for Supabase auth state changes without blocking the event dispatcher
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (!isMounted) return;
 
-      if (newSession?.user) {
+      if (event === 'SIGNED_OUT' || !newSession) {
+        if (!sessionStorage.getItem(DEMO_STORAGE_KEY)) {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setIsDemoPreview(false);
+        }
+        setIsLoading(false);
+      } else if (newSession?.user) {
         setSession(newSession);
         setUser(newSession.user);
         setIsDemoPreview(false);
-        await fetchUserProfile(newSession.user.id);
         sessionStorage.removeItem(DEMO_STORAGE_KEY);
-      } else if (!sessionStorage.getItem(DEMO_STORAGE_KEY)) {
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        setIsDemoPreview(false);
+        setIsLoading(false);
+
+        // Defer profile fetch asynchronously without awaiting in the callback
+        fetchUserProfile(newSession.user).catch((err) => {
+          console.warn('[AuthContext] Deferred profile hydration error:', err);
+        });
       }
-      setIsLoading(false);
     });
 
     return () => {
@@ -127,35 +157,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const signIn = useCallback(async (email: string, password: string): Promise<Result<{ user: User; profile: Profile | null }>> => {
     setIsLoading(true);
-    const result = await authService.signInWithPassword(email, password);
+    try {
+      const result = await authService.signInWithPassword(email, password);
 
-    if (result.success && result.data) {
-      setUser(result.data.user);
-      setProfile(result.data.profile);
-      setIsDemoPreview(false);
-      sessionStorage.removeItem(DEMO_STORAGE_KEY);
+      if (result.success && result.data) {
+        setUser(result.data.user);
+        setProfile(result.data.profile);
+        setIsDemoPreview(false);
+        sessionStorage.removeItem(DEMO_STORAGE_KEY);
+      }
+
+      return result;
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
-    return result;
   }, []);
 
   /**
    * Real Supabase registration
    */
-  const signUp = useCallback(async (params: SignUpParams): Promise<Result<{ user: User | null; profile: Profile | null }>> => {
+  const signUp = useCallback(async (params: SignUpParams): Promise<Result<{ user: User | null; profile: Profile | null; session: Session | null }>> => {
     setIsLoading(true);
-    const result = await authService.signUp(params);
+    try {
+      const result = await authService.signUp(params);
+      console.log('[AuthContext.signUp] authService.signUp returned:', result);
 
-    if (result.success && result.data && result.data.user) {
-      setUser(result.data.user);
-      setProfile(result.data.profile);
-      setIsDemoPreview(false);
-      sessionStorage.removeItem(DEMO_STORAGE_KEY);
+      if (result.success && result.data && result.data.user) {
+        if (result.data.profile) {
+          setUser(result.data.user);
+          setProfile(result.data.profile);
+        }
+        setIsDemoPreview(false);
+        sessionStorage.removeItem(DEMO_STORAGE_KEY);
+      }
+
+      return result;
+    } catch (err) {
+      console.error('[AUTH SIGNUP ERROR in AuthContext]', err);
+      return {
+        success: false,
+        data: null,
+        error: {
+          message: err instanceof Error ? err.message : 'An unexpected error occurred during sign up.',
+        },
+      };
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
-    return result;
   }, []);
 
   /**
@@ -202,20 +250,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const signOut = useCallback(async () => {
     setIsLoading(true);
-    sessionStorage.removeItem(DEMO_STORAGE_KEY);
-    await authService.signOut();
-    setUser(null);
-    setSession(null);
-    setProfile(null);
-    setIsDemoPreview(false);
-    setIsLoading(false);
+    try {
+      sessionStorage.removeItem(DEMO_STORAGE_KEY);
+      await authService.signOut();
+      setUser(null);
+      setSession(null);
+      setProfile(null);
+      setIsDemoPreview(false);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    if (user && !isDemoPreview) {
-      await fetchUserProfile(user.id);
+    const currentUser = userRef.current;
+    if (currentUser && !isDemoPreviewRef.current) {
+      await fetchUserProfile(currentUser);
     }
-  }, [user, isDemoPreview, fetchUserProfile]);
+  }, [fetchUserProfile]);
 
   return (
     <AuthContext.Provider

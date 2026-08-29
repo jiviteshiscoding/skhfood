@@ -12,8 +12,14 @@ interface EnvConfig {
 }
 
 export const env: EnvConfig = {
-  supabaseUrl: (import.meta.env.VITE_SUPABASE_URL as string) || '',
-  supabaseAnonKey: (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || '',
+  supabaseUrl: ((import.meta.env.VITE_SUPABASE_URL as string) || '')
+    .trim()
+    .replace(/\/rest\/v1\/?$/i, '')
+    .replace(/\/+$/, ''),
+  supabaseAnonKey:
+    ((import.meta.env.VITE_SUPABASE_ANON_KEY as string) ||
+      (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string) ||
+      '').trim(),
   appName: (import.meta.env.VITE_APP_NAME as string) || 'SKH Farm Tracer',
   appEnv: (import.meta.env.VITE_APP_ENV as string) || 'development',
   isProduction: import.meta.env.PROD,
@@ -32,8 +38,12 @@ export const validateEnvironment = (): EnvValidationResult => {
     missingKeys.push('VITE_SUPABASE_URL');
   }
 
-  if (!env.supabaseAnonKey || env.supabaseAnonKey.includes('your-anon-key')) {
-    missingKeys.push('VITE_SUPABASE_ANON_KEY');
+  if (
+    !env.supabaseAnonKey ||
+    env.supabaseAnonKey.includes('your-anon-key') ||
+    env.supabaseAnonKey.includes('your-publishable-key')
+  ) {
+    missingKeys.push('VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY)');
   }
 
   return {

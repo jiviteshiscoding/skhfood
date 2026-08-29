@@ -1,4 +1,4 @@
-import { Profile, Organization } from './auth';
+import { Profile, Organization, OrganizationMember } from './auth';
 import { Product, Batch } from './batch';
 import { BatchEvent } from './event';
 import { BatchLineage } from './lineage';
@@ -25,6 +25,11 @@ export interface Database {
         Row: Organization;
         Insert: Omit<Organization, 'id' | 'created_at'>;
         Update: Partial<Omit<Organization, 'id' | 'created_at'>>;
+      };
+      organization_members: {
+        Row: OrganizationMember;
+        Insert: Omit<OrganizationMember, 'id' | 'created_at'>;
+        Update: Partial<Omit<OrganizationMember, 'id' | 'created_at'>>;
       };
       products: {
         Row: Product;

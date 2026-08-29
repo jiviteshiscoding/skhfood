@@ -100,6 +100,18 @@ CREATE POLICY "Allow authenticated read on organization members"
     TO authenticated 
     USING (true);
 
+DROP POLICY IF EXISTS "Allow authenticated users to insert organization members" ON public.organization_members;
+CREATE POLICY "Allow authenticated users to insert organization members" 
+    ON public.organization_members FOR INSERT 
+    TO authenticated 
+    WITH CHECK (EXISTS (SELECT 1 FROM public.profiles WHERE id = profile_id AND user_id = auth.uid()));
+
+DROP POLICY IF EXISTS "Allow authenticated users to delete own organization membership" ON public.organization_members;
+CREATE POLICY "Allow authenticated users to delete own organization membership" 
+    ON public.organization_members FOR DELETE 
+    TO authenticated 
+    USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = profile_id AND user_id = auth.uid()));
+
 -- ------------------------------------------------------------------------------
 -- 6. Trigger for Automatic Profile Creation upon Supabase Auth Signup
 -- ------------------------------------------------------------------------------
@@ -108,18 +120,42 @@ RETURNS TRIGGER AS $$
 DECLARE
     default_role TEXT;
     user_name TEXT;
+    org_id_text TEXT;
+    org_uuid UUID;
+    new_profile_id UUID;
 BEGIN
     default_role := COALESCE(NEW.raw_user_meta_data->>'role', 'FARMER');
     user_name := COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1));
+    org_id_text := NEW.raw_user_meta_data->>'organization_id';
 
-    INSERT INTO public.profiles (user_id, full_name, role, language)
+    IF org_id_text IS NOT NULL AND org_id_text != '' THEN
+        BEGIN
+            org_uuid := org_id_text::UUID;
+        EXCEPTION WHEN OTHERS THEN
+            org_uuid := NULL;
+        END;
+    END IF;
+
+    INSERT INTO public.profiles (user_id, full_name, role, organization_id, language)
     VALUES (
         NEW.id,
         user_name,
         default_role,
+        org_uuid,
         COALESCE(NEW.raw_user_meta_data->>'language', 'en')
     )
-    ON CONFLICT (user_id) DO NOTHING;
+    ON CONFLICT (user_id) DO UPDATE SET
+        full_name = EXCLUDED.full_name,
+        role = EXCLUDED.role,
+        organization_id = COALESCE(EXCLUDED.organization_id, public.profiles.organization_id),
+        language = EXCLUDED.language
+    RETURNING id INTO new_profile_id;
+
+    IF org_uuid IS NOT NULL AND new_profile_id IS NOT NULL THEN
+        INSERT INTO public.organization_members (organization_id, profile_id, role_in_org)
+        VALUES (org_uuid, new_profile_id, CASE WHEN default_role = 'ADMIN' THEN 'ADMIN' ELSE 'MEMBER' END)
+        ON CONFLICT (organization_id, profile_id) DO NOTHING;
+    END IF;
 
     RETURN NEW;
 END;

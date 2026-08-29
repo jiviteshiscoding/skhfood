@@ -189,11 +189,10 @@ export const DashboardHomeView: React.FC = () => {
             Current Phase Status
           </div>
           <h3 className="font-bold text-slate-900 text-sm mb-1">
-            Phase 1: Authentication & Role Shell
+            Phase 2: Authentication & RLS Active
           </h3>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Frontend login experience, role-aware routing boundaries, and UI previews are active. 
-            Real Supabase authentication policies are prepared for Phase 2.
+            Real Supabase Auth session persistence, user profiles, organization associations, and RLS policies are active.
           </p>
         </Card>
 
